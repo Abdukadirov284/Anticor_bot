@@ -1,4 +1,4 @@
-pytelegrambotapi
+python-telegram-bot
 requests
 Flask
 gunicorn

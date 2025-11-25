@@ -1,30 +1,30 @@
-import requests
-import telebot
-import os # Server portini olish uchun kerak
-from telebot import types
-from html import escape as html_escape 
-from flask import Flask, request # Webhook uchun kerak
+import os
+from flask import Flask, request
+from html import escape as html_escape
+
+# PTB (python-telegram-bot) importlari
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+)
 
 # === TOKEN VA ADMIN ID ===
+# DIQQAT: PTB kutubxonasini ishlatish uchun Tokeningiz to'g'ri ekanligiga ishonch hosil qiling.
 BOT_TOKEN = "8549346336:AAFMvd3jU68-1-csiwOMRML0CflfkW114i4"
 ADMIN_CHAT_ID = 7413228837 
 
-# --- Bot va Flaskni ishga tushirish ---
-bot = telebot.TeleBot(BOT_TOKEN)
-server = Flask(__name__) # Webhookni boshqaruvchi server
+# --- KONVERSATSIYA BOSQICHLARI ---
+SELECT_CATEGORY, ENTER_COMPLAINT = range(2)
+
 
 # --- GLOBAL FUNKSIYALAR ---
 
 def create_main_menu_keyboard():
-    # Faqat "Shikoyat qilish" tugmasi bo'lgan asosiy menu
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    markup.add(types.KeyboardButton("📨 Shikoyat qilish")) 
-    return markup
+    # Faqat "Shikoyat qilish" tugmasi
+    return ReplyKeyboardMarkup([["📨 Shikoyat qilish"]], resize_keyboard=True, one_time_keyboard=False)
 
 def create_complaint_type_keyboard():
-    # Shikoyat turlari bo'lgan menu (Reply Keyboard)
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=False)
-    
+    # Shikoyat turlari
     options = [
         "🚫 Korrupsiya", "🏠 Yotoqxona muammolari", 
         "👩‍🏫 O‘qituvchi muammosi", "🧾 Imtihon adolatsizligi",
@@ -32,94 +32,70 @@ def create_complaint_type_keyboard():
         "📑 Hujjatlar muammosi", "🧳 Yotoqxona kirish/chiqarish", 
         "💸 Pora/pul talab qilish", "📝 Boshqa shikoyat"
     ]
-    
+    keyboard = []
     # Ikki qatorli joylashtirish
     for i in range(0, len(options), 2):
-        row = []
-        row.append(types.KeyboardButton(options[i]))
+        row = [options[i]]
         if i + 1 < len(options):
-            row.append(types.KeyboardButton(options[i+1]))
-        markup.row(*row)
+            row.append(options[i+1])
+        keyboard.append(row)
 
-    # Bekor qilish tugmasini alohida qo'shish
-    markup.row(types.KeyboardButton("❌ Bekor qilish"))
-    return markup
+    # Bekor qilish tugmasini qo'shish
+    keyboard.append(["❌ Bekor qilish"])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
-# --- 1. START FUNKSIYASI ---
-@bot.message_handler(commands=["start"])
-def start(message):
+
+# --- HANDLER FUNKSIYALARI ---
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """/start buyrug'ini boshqaradi va asosiy menyuni chiqaradi."""
     markup = create_main_menu_keyboard()
-    
-    bot.send_message(message.chat.id,
-                     "Assalomu alaykum!\nQuyidagilardan birini tanlang:",
-                     reply_markup=markup)
+    await update.message.reply_text(
+        "Assalomu alaykum!\nQuyidagilardan birini tanlang:",
+        reply_markup=markup
+    )
+    # Konversiya logikasini to'xtatadi
+    return ConversationHandler.END
 
-
-# 2. --- ASOSIY MENYU TUGMALARI HANDLERI ---
-
-# Shikoyat qilish tugmasi bosilganda
-@bot.message_handler(func=lambda message: message.text == "📨 Shikoyat qilish")
-def show_complaint_menu(message):
+async def start_complaint(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Shikoyat qilish tugmasi bosilganda ishga tushadi."""
     markup = create_complaint_type_keyboard()
-    
-    bot.send_message(message.chat.id, 
-                     "📨 Shikoyat turini tanlang:",
-                     reply_markup=markup)
+    await update.message.reply_text(
+        "📨 Shikoyat turini tanlang:",
+        reply_markup=markup
+    )
+    # Keyingi bosqichga o'tish
+    return SELECT_CATEGORY
 
-# Bekor qilish tugmasi bosilganda
-@bot.message_handler(func=lambda message: message.text == "❌ Bekor qilish")
-def cancel_action_reply(message):
-    # Reply Keyboardni olib tashlab, asosiy menyuni chiqarish
-    markup = create_main_menu_keyboard()
+async def select_category(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Foydalanuvchi shikoyat turini tanlaganda ishga tushadi."""
+    category = update.message.text
+    context.user_data['category'] = category
     
-    bot.send_message(message.chat.id, 
-                     "❌ Amal bekor qilindi.",
-                     reply_markup=markup)
-
-# 3. --- SHIKOYAT TURLARI HANDLERI ---
-
-# Barcha shikoyat turlari uchun umumiy handler
-@bot.message_handler(func=lambda message: message.text in [
-    "🚫 Korrupsiya", "🏠 Yotoqxona muammolari", 
-    "👩‍🏫 O‘qituvchi muammosi", "🧾 Imtihon adolatsizligi",
-    "🧍‍♂️ Dekan/Fakultet muammosi", "🧑‍💼 Xodimlar bo‘yicha",
-    "📑 Hujjatlar muammosi", "🧳 Yotoqxona kirish/chiqarish", 
-    "💸 Pora/pul talab qilish", "📝 Boshqa shikoyat"
-])
-def ask_text_reply(message):
-    # message.text bu yerda bizning kategoriyamiz bo'ladi (masalan, "🚫 Korrupsiya")
-    category = message.text
+    hide_markup = ReplyKeyboardRemove()
     
-    # Oldingi Reply Keyboardni olib tashlab, foydalanuvchiga yozishni so'rash
-    hide_markup = types.ReplyKeyboardRemove(selective=False)
-    
-    msg = bot.send_message(
-        message.chat.id,
+    await update.message.reply_text(
         "✍️ Shikoyatingizni yozing.\n\n"
         "📷 Rasm: 5 MB dan oshmasin\n"
         "🎥 Video: 1 daqiqadan oshmasin",
-        reply_markup=hide_markup # Klaviatura vaqtincha yo'qoladi
+        reply_markup=hide_markup
     )
     
-    # Endi next_step_handlerga category matnini o'tkazamiz
-    bot.register_next_step_handler(msg, forward_to_admin, category)
+    # Shikoyat matnini kutish bosqichiga o'tish
+    return ENTER_COMPLAINT
 
-
-# --- SEND TO ADMIN FUNKSIYASI ---
-def forward_to_admin(message, category):
-    # Agar foydalanuvchi buyruq yuborsa, shikoyat jarayonini to'xtatish
-    if message.text and message.text.startswith('/'):
-        bot.reply_to(message, "Iltimos, avval shikoyatingizni yozib tugating yoki /start buyrug'ini qaytadan yuboring.")
-        return
-
-    # User ma'lumotlari
-    user_id = message.from_user.id
-    username = message.from_user.username
-    user_first_name = message.from_user.first_name
-    user_last_name = message.from_user.last_name if message.from_user.last_name else ""
-    full_name = f"{user_first_name} {user_last_name}".strip()
-
-    message_text_raw = message.text if message.text else "Tekst mavjud emas (media)"
+async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Shikoyat matnini qabul qiladi va adminga yuboradi."""
+    category = context.user_data.get('category', 'Noma\'lum')
+    user = update.effective_user
+    
+    user_id = user.id
+    username = user.username
+    full_name = f"{user.first_name} {user.last_name if user.last_name else ''}".strip()
+    
+    # Matn yoki media sarlavhasini olish
+    message_text_raw = update.message.caption if update.message.caption else update.message.text
+    message_text_raw = message_text_raw if message_text_raw else "Tekst mavjud emas (media)"
     
     cleaned_message_text = html_escape(message_text_raw)
     cleaned_category = html_escape(category) 
@@ -136,62 +112,99 @@ def forward_to_admin(message, category):
         f"<b>Username:</b> {html_escape('@' + username) if username else 'Mavjud emas'}"
     )
 
-
-    # Mediani yuborish logikasi
     try:
-        if message.photo:
-            bot.send_photo(ADMIN_CHAT_ID, 
-                           message.photo[-1].file_id, 
-                           caption=text, 
-                           parse_mode="HTML")
-        elif message.video:
-            bot.send_video(ADMIN_CHAT_ID, 
-                           message.video.file_id, 
-                           caption=text, 
-                           parse_mode="HTML")
+        # Mediani yuborish
+        if update.message.photo:
+            photo_file_id = update.message.photo[-1].file_id
+            await context.bot.send_photo(ADMIN_CHAT_ID, photo_file_id, caption=text, parse_mode="HTML")
+        elif update.message.video:
+            video_file_id = update.message.video.file_id
+            await context.bot.send_video(ADMIN_CHAT_ID, video_file_id, caption=text, parse_mode="HTML")
         else:
-            bot.send_message(ADMIN_CHAT_ID, text, parse_mode="HTML") 
+            await context.bot.send_message(ADMIN_CHAT_ID, text, parse_mode="HTML") 
+
+        # Foydalanuvchiga tasdiqlash xabari
+        markup = create_main_menu_keyboard()
+        await update.message.reply_text(
+            "✅ Shikoyatingiz yuborildi. Tez orada javob beramiz. Rahmat!", 
+            reply_markup=markup
+        )
+        
     except Exception as e:
-        # Admin xatosi haqida ma'lumot (masalan, chat topilmadi)
-        print(f"Adminga xabar yuborishda xatolik: {e}")
-        bot.reply_to(message, "❌ Uzr, shikoyatni Adminga yuborishda texnik xato yuz berdi. Iltimos, keyinroq urinib ko'ring.")
-        return
+        print(f"--- KRITIK XATO (PTB): Adminga yuborishda xato: {e} ---")
+        await update.message.reply_text(
+            "❌ Uzr, shikoyatni Adminga yuborishda texnik xato yuz berdi. Iltimos, keyinroq urinib ko'ring."
+        )
 
-    # Foydalanuvchiga tasdiqlash xabari va asosiy menyuni qaytarish
+    # Konversiyani yakunlash
+    return ConversationHandler.END
+
+async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Bekor qilish tugmasi bosilganda ishga tushadi."""
     markup = create_main_menu_keyboard()
-    bot.reply_to(message, "✅ Shikoyatingiz yuborildi. Tez orada javob beramiz Rahmat!", reply_markup=markup)
+    await update.message.reply_text(
+        "❌ Amal bekor qilindi.",
+        reply_markup=markup
+    )
+    return ConversationHandler.END
 
+# --- ASOSIY ILK O'RNATISH (SETUP) ---
+# Flask serverini ishga tushirish
+app = Flask(__name__)
+application = Application.builder().token(8549346336:AAFMvd3jU68-1-csiwOMRML0CflfkW114i4).build()
+
+# Konversiya Handlerni sozlash
+complaint_handler = ConversationHandler(
+    entry_points=[
+        MessageHandler(filters.Regex("^📨 Shikoyat qilish$"), start_complaint)
+    ],
+    states={
+        SELECT_CATEGORY: [
+            MessageHandler(filters.Regex("^(🚫|🏠|👩‍🏫|🧾|🧍‍♂️|🧑‍💼|📑|🧳|💸|📝)"), select_category),
+        ],
+        ENTER_COMPLAINT: [
+            MessageHandler(filters.ALL & ~filters.COMMAND, forward_to_admin),
+        ],
+    },
+    fallbacks=[
+        MessageHandler(filters.Regex("^❌ Bekor qilish$"), cancel_action),
+        CommandHandler("start", start_command)
+    ],
+)
+
+# Handlerni qo'shish
+application.add_handler(CommandHandler("start", start_command))
+application.add_handler(complaint_handler)
+application.add_handler(MessageHandler(filters.Regex("^❌ Bekor qilish$"), cancel_action)) # Bekor qilishni barcha bosqichlarda ushlaydi
 
 # --- WEBHOOK QISMI (24/7 ishlash uchun) ---
 
-@server.route('/' + BOT_TOKEN, methods=['POST'])
-def getMessage():
-    """Telegramdan kelgan xabarni qabul qiladi va uni botga yuboradi."""
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    else:
-        return '', 403
+@app.route(f"/{8549346336:AAFMvd3jU68-1-csiwOMRML0CflfkW114i4}", methods=["POST"])
+async def webhook_handler():
+    """Telegramdan kelgan xabarni qabul qiladi va PTB ga yuboradi."""
+    if request.method == "POST":
+        update = Update.de_json(await request.get_json(), application.bot)
+        
+        # PTB ni Webhook orqali ishga tushirish
+        await application.process_update(update)
+        
+        return "ok", 200
+    return "ok", 200
 
-@server.route("/")
-def webhook_set():
-    """Serverni ishga tushirishda Webhookni o'rnatish uchun funksiya."""
-    # Webhook manzili (Bu joylashtirganingizdan keyin o'zgaradi, masalan Render/Heroku URL'i)
-    # Siz uni qo'lda o'zgartirishingiz shart emas, chunki hosting muhiti o'zi o'rnatadi.
-    # Agar test qilmoqchi bo'lsangiz, WEBHOOK_URL o'rniga Ngrok manzilingizni qo'yishingiz mumkin.
-    
-    # Biz shunchaki server ishlayotganini bildirish uchun 200 kodini qaytaramiz.
+@app.route("/")
+def index():
+    """Bot serveri ishlayotganini bildirish uchun."""
     return "Bot serveri ishlayapti.", 200
 
+# Webhookni bir marta o'rnatish uchun funksiya (Server ishga tushgandan so'ng Render Logs'da paydo bo'ladi)
+async def set_webhook():
+    # Render muhiti dinamik URL manzilini talab qiladi.
+    # Bu yerda biz avtomatik Webhook o'rnatishni bekor qilamiz va u Render'da joylashganini taxmin qilamiz.
+    # Agar bu Renderda ishlamasa, sizning Webhook URL'ingizni qo'lda o'rnatish kerak bo'ladi.
+    pass
 
 if __name__ == "__main__":
-    # Server portini muhit o'zgaruvchisidan olamiz (Render/Heroku talabi)
+    # Server portini muhit o'zgaruvchisidan olamiz (Render talabi)
     PORT = int(os.environ.get('PORT', 5000))
-    # Bu joyda Webhook URL ni o'rnatish uchun alohida so'rov jo'natish kerak bo'ladi.
-    # Bepul hostingda uni joylashtirgandan so'ng, brauzerda bir marta / so'rovini yuborishingiz kerak.
-    # Masalan: https://your-app-name.onrender.com/
-    
-    print(f"Flask serveri {PORT} portida ishga tushdi...")
-    server.run(host="0.0.0.0", port=PORT)
+    # Flask app ni ishga tushirish
+    app.run(host="0.0.0.0", port=PORT)
