@@ -151,7 +151,7 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 # --- ASOSIY ILK O'RNATISH (SETUP) ---
 # Flask serverini ishga tushirish
 app = Flask(__name__)
-application = Application.builder().token(8549346336:AAFMvd3jU68-1-csiwOMRML0CflfkW114i4).build()
+application = Application.builder().token("8549346336:AAFMvd3jU68-1-csiwOMRML0CflfkW114i4").build()
 
 # Konversiya Handlerni sozlash
 complaint_handler = ConversationHandler(
